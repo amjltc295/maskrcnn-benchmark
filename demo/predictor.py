@@ -184,6 +184,30 @@ class COCODemo(object):
 
         return result
 
+    def compute_predictions(self, original_images, do_mask=False):
+        images = []
+        for original_image in original_images:
+            image = self.transforms(original_image)
+            images.append(image)
+        # convert to an ImageList, padded so that it is divisible by
+        # cfg.DATALOADER.SIZE_DIVISIBILITY
+        image_list = to_image_list(images, self.cfg.DATALOADER.SIZE_DIVISIBILITY)
+        image_list = image_list.to(self.device)
+        # compute predictions
+        with torch.no_grad():
+            predictions = self.model(image_list)
+        predictions = [o.to(self.cpu_device) for o in predictions]
+        height, width = original_images[0].shape[:-1]
+        predictions = [p.resize((width, height)) for p in predictions]
+        for prediction in predictions:
+            # if we have masks, paste the masks in the right position
+            # in the image, as defined by the bounding boxes
+            masks = prediction.get_field("mask")
+            # always single image is passed at a time
+            masks = self.masker([masks], [prediction])[0]
+            prediction.add_field("mask", masks)
+        return predictions
+
     def compute_prediction(self, original_image):
         """
         Arguments:
@@ -273,7 +297,7 @@ class COCODemo(object):
 
         return image
 
-    def overlay_mask(self, image, predictions):
+    def overlay_mask(self, image, predictions, line_width=3):
         """
         Adds the instances contours for each predicted object.
         Each label has a different color.
@@ -293,7 +317,7 @@ class COCODemo(object):
             contours, hierarchy = cv2_util.findContours(
                 thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
             )
-            image = cv2.drawContours(image, contours, -1, color, 3)
+            image = cv2.drawContours(image, contours, -1, color, line_width)
 
         composite = image
 
